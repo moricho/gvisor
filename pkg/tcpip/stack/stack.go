@@ -929,13 +929,26 @@ func (s *Stack) EnableNIC(id tcpip.NICID) *tcpip.Error {
 	return nic.enable()
 }
 
+// DisableNIC disables the given NIC.
+func (s *Stack) DisableNIC(id tcpip.NICID) *tcpip.Error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nic := s.nics[id]
+	if nic == nil {
+		return tcpip.ErrUnknownNICID
+	}
+
+	return nic.disable()
+}
+
 // CheckNIC checks if a NIC is usable.
 func (s *Stack) CheckNIC(id tcpip.NICID) bool {
 	s.mu.RLock()
 	nic, ok := s.nics[id]
 	s.mu.RUnlock()
 	if ok {
-		return nic.linkEP.IsAttached()
+		return nic.enabled()
 	}
 	return false
 }
@@ -970,6 +983,9 @@ type NICInfo struct {
 	// Context is user-supplied data optionally supplied in CreateNICWithOptions.
 	// See type NICOptions for more details.
 	Context NICContext
+
+	// Disabled is true when the NIC is disabled.
+	Disabled bool
 }
 
 // HasNIC returns true if the NICID is defined in the stack.
@@ -1001,6 +1017,7 @@ func (s *Stack) NICInfo() map[tcpip.NICID]NICInfo {
 			MTU:               nic.linkEP.MTU(),
 			Stats:             nic.stats,
 			Context:           nic.context,
+			Disabled:          !nic.enabled(),
 		}
 	}
 	return nics
@@ -1151,7 +1168,7 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 	isMulticast := header.IsV4MulticastAddress(remoteAddr) || header.IsV6MulticastAddress(remoteAddr)
 	needRoute := !(isBroadcast || isMulticast || header.IsV6LinkLocalAddress(remoteAddr))
 	if id != 0 && !needRoute {
-		if nic, ok := s.nics[id]; ok {
+		if nic, ok := s.nics[id]; ok && nic.enabled() {
 			if ref := s.getRefEP(nic, localAddr, remoteAddr, netProto); ref != nil {
 				return makeRoute(netProto, ref.ep.ID().LocalAddress, remoteAddr, nic.linkEP.LinkAddress(), ref, s.handleLocal && !nic.isLoopback(), multicastLoop && !nic.isLoopback()), nil
 			}
@@ -1161,7 +1178,7 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 			if (id != 0 && id != route.NIC) || (len(remoteAddr) != 0 && !route.Destination.Contains(remoteAddr)) {
 				continue
 			}
-			if nic, ok := s.nics[route.NIC]; ok {
+			if nic, ok := s.nics[route.NIC]; ok && nic.enabled() {
 				if ref := s.getRefEP(nic, localAddr, remoteAddr, netProto); ref != nil {
 					if len(remoteAddr) == 0 {
 						// If no remote address was provided, then the route
@@ -1612,6 +1629,18 @@ func (s *Stack) LeaveGroup(protocol tcpip.NetworkProtocolNumber, nicID tcpip.NIC
 		return nic.leaveGroup(multicastAddr)
 	}
 	return tcpip.ErrUnknownNICID
+}
+
+// IsInGroup returns true if the NIC with ID nicID has joined the multicast
+// group multicastAddr.
+func (s *Stack) IsInGroup(nicID tcpip.NICID, multicastAddr tcpip.Address) (bool, *tcpip.Error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if nic, ok := s.nics[nicID]; ok {
+		return nic.isInGroup(multicastAddr), nil
+	}
+	return false, tcpip.ErrUnknownNICID
 }
 
 // IPTables returns the stack's iptables.
