@@ -1,4 +1,4 @@
-// Copyright 2019 The gVisor Authors.
+// Copyright 2020 The gVisor Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package linux
+package vfs2
 
-// EpollEvent is equivalent to struct epoll_event from epoll(2).
+// FIXME(b/130243041): Remove once go-marshal works with newtypes of
+// primitives.
 //
 // +marshal
-type EpollEvent struct {
-	Events uint32
-	// Linux makes struct epoll_event::data a __u64. We represent it as
-	// [2]int32 because, on amd64, Linux also makes struct epoll_event
-	// __attribute__((packed)), such that there is no padding between Events
-	// and Data.
-	Data [2]int32
+type marshalableSignalSet struct {
+	data uint64
 }

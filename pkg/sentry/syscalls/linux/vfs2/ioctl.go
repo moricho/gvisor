@@ -1,4 +1,4 @@
-// Copyright 2019 The gVisor Authors.
+// Copyright 2020 The gVisor Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package linux
+package vfs2
 
-// EpollEvent is equivalent to struct epoll_event from epoll(2).
-//
-// +marshal
-type EpollEvent struct {
-	Events uint32
-	// Linux makes struct epoll_event::data a __u64. We represent it as
-	// [2]int32 because, on amd64, Linux also makes struct epoll_event
-	// __attribute__((packed)), such that there is no padding between Events
-	// and Data.
-	Data [2]int32
+import (
+	"gvisor.dev/gvisor/pkg/sentry/arch"
+	"gvisor.dev/gvisor/pkg/sentry/kernel"
+	"gvisor.dev/gvisor/pkg/syserror"
+)
+
+// Ioctl implements Linux syscall ioctl(2).
+func Ioctl(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.SyscallControl, error) {
+	fd := args[0].Int()
+
+	file := t.GetFileVFS2(fd)
+	if file == nil {
+		return 0, nil, syserror.EBADF
+	}
+	defer file.DecRef()
+
+	ret, err := file.Ioctl(t, t.MemoryManager(), args)
+	return ret, nil, err
 }

@@ -157,6 +157,8 @@ func DurationToTimespec(dur time.Duration) Timespec {
 const SizeOfTimeval = 16
 
 // Timeval represents struct timeval in <time.h>.
+//
+// +marshal
 type Timeval struct {
 	Sec  int64
 	Usec int64
@@ -230,6 +232,8 @@ type Tms struct {
 type TimerID int32
 
 // StatxTimestamp represents struct statx_timestamp.
+//
+// +marshal
 type StatxTimestamp struct {
 	Sec  int64
 	Nsec uint32

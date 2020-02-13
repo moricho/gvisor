@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build arm64
+
 package vfs2
 
 import (
@@ -23,3 +25,9 @@ import (
 func Override(table map[uintptr]kernel.Syscall) {
 	table[63] = syscalls.Supported("read", Read)
 }
+
+// FIXME(b/130243041): Delete once no longer needed to work around go-marshal
+// bug.
+//
+// +marshal
+type dummy struct{}
