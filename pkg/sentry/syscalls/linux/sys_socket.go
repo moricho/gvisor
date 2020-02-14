@@ -29,6 +29,7 @@ import (
 	"gvisor.dev/gvisor/pkg/syserr"
 	"gvisor.dev/gvisor/pkg/syserror"
 	"gvisor.dev/gvisor/pkg/usermem"
+	"gvisor.dev/gvisor/tools/go_marshal/marshal"
 )
 
 // minListenBacklog is the minimum reasonable backlog for listening sockets.
@@ -63,10 +64,10 @@ const flagsOffset = 48
 const sizeOfInt32 = 4
 
 // messageHeader64Len is the length of a MessageHeader64 struct.
-var messageHeader64Len = uint64(binary.Size(MessageHeader64{}))
+var messageHeader64Len = uint64((*MessageHeader64)(nil).SizeBytes())
 
 // multipleMessageHeader64Len is the length of a multipeMessageHeader64 struct.
-var multipleMessageHeader64Len = uint64(binary.Size(multipleMessageHeader64{}))
+var multipleMessageHeader64Len = uint64((*multipleMessageHeader64)(nil).SizeBytes())
 
 // baseRecvFlags are the flags that are accepted across recvmsg(2),
 // recvmmsg(2), and recvfrom(2).
@@ -74,6 +75,8 @@ const baseRecvFlags = linux.MSG_OOB | linux.MSG_DONTROUTE | linux.MSG_DONTWAIT |
 
 // MessageHeader64 is the 64-bit representation of the msghdr struct used in
 // the recvmsg and sendmsg syscalls.
+//
+// +marshal
 type MessageHeader64 struct {
 	// Name is the optional pointer to a network address buffer.
 	Name uint64
@@ -102,28 +105,12 @@ type MessageHeader64 struct {
 
 // multipleMessageHeader64 is the 64-bit representation of the mmsghdr struct used in
 // the recvmmsg and sendmmsg syscalls.
+//
+// +marshal
 type multipleMessageHeader64 struct {
 	msgHdr MessageHeader64
 	msgLen uint32
 	_      int32
-}
-
-// CopyInMessageHeader64 copies a message header from user to kernel memory.
-func CopyInMessageHeader64(t *kernel.Task, addr usermem.Addr, msg *MessageHeader64) error {
-	b := t.CopyScratchBuffer(52)
-	if _, err := t.CopyInBytes(addr, b); err != nil {
-		return err
-	}
-
-	msg.Name = usermem.ByteOrder.Uint64(b[0:])
-	msg.NameLen = usermem.ByteOrder.Uint32(b[8:])
-	msg.Iov = usermem.ByteOrder.Uint64(b[16:])
-	msg.IovLen = usermem.ByteOrder.Uint64(b[24:])
-	msg.Control = usermem.ByteOrder.Uint64(b[32:])
-	msg.ControlLen = usermem.ByteOrder.Uint64(b[40:])
-	msg.Flags = int32(usermem.ByteOrder.Uint32(b[48:]))
-
-	return nil
 }
 
 // CaptureAddress allocates memory for and copies a socket address structure
@@ -144,7 +131,7 @@ func CaptureAddress(t *kernel.Task, addr usermem.Addr, addrlen uint32) ([]byte, 
 // writeAddress writes a sockaddr structure and its length to an output buffer
 // in the unstrusted address space range. If the address is bigger than the
 // buffer, it is truncated.
-func writeAddress(t *kernel.Task, addr interface{}, addrLen uint32, addrPtr usermem.Addr, addrLenPtr usermem.Addr) error {
+func writeAddress(t *kernel.Task, addr linux.SockAddr, addrLen uint32, addrPtr usermem.Addr, addrLenPtr usermem.Addr) error {
 	// Get the buffer length.
 	var bufLen uint32
 	if _, err := t.CopyIn(addrLenPtr, &bufLen); err != nil {
@@ -169,7 +156,9 @@ func writeAddress(t *kernel.Task, addr interface{}, addrLen uint32, addrPtr user
 	}
 
 	// Copy as much of the address as will fit in the buffer.
-	encodedAddr := binary.Marshal(nil, usermem.ByteOrder, addr)
+	addrM := addr.(marshal.Marshallable)
+	encodedAddr := t.CopyScratchBuffer(addrM.SizeBytes())
+	addrM.MarshalUnsafe(encodedAddr)
 	if bufLen > uint32(len(encodedAddr)) {
 		bufLen = uint32(len(encodedAddr))
 	}
@@ -737,7 +726,7 @@ func RecvMMsg(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysc
 func recvSingleMsg(t *kernel.Task, s socket.Socket, msgPtr usermem.Addr, flags int32, haveDeadline bool, deadline ktime.Time) (uintptr, error) {
 	// Capture the message header and io vectors.
 	var msg MessageHeader64
-	if err := CopyInMessageHeader64(t, msgPtr, &msg); err != nil {
+	if _, err := msg.CopyIn(t, msgPtr); err != nil {
 		return 0, err
 	}
 
@@ -1000,7 +989,7 @@ func SendMMsg(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysc
 func sendSingleMsg(t *kernel.Task, s socket.Socket, file *fs.File, msgPtr usermem.Addr, flags int32) (uintptr, error) {
 	// Capture the message header.
 	var msg MessageHeader64
-	if err := CopyInMessageHeader64(t, msgPtr, &msg); err != nil {
+	if _, err := msg.CopyIn(t, msgPtr); err != nil {
 		return 0, err
 	}
 
